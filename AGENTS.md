@@ -20,6 +20,8 @@ open-xiaoai-bridge/
 │   ├── xiaozhi.py                 # 小智 AI WebSocket 协议客户端
 │   ├── openclaw.py                # OpenClaw 网关客户端（连接、消息、TTS 播放）
 │   ├── openclaw_conversation.py   # OpenClaw 连续对话循环（VAD → ASR → Agent → TTS）
+│   ├── xai_realtime.py             # xAI Realtime Voice WebSocket 协议客户端
+│   ├── xai_conversation.py         # Grok Voice 全双工会话、打断与有界音频队列
 │   ├── wakeup_session.py          # 小智唤醒会话状态机
 │   ├── ref.py                     # 全局引用注册表（get/set 依赖注入）
 │   ├── models/                    # 模型文件（KWS/VAD/ASR，.gitignore 排除）
@@ -49,6 +51,7 @@ open-xiaoai-bridge/
 │       ├── server.rs              # WebSocket 音频服务器（TCP :4399）
 │       ├── python.rs              # Python 回调注册中心（HashMap）
 │       ├── macros.rs              # 辅助宏
+│       ├── aec.rs                 # Sonora AEC3 PyO3 封装（10ms PCM16）
 │       └── tts/                   # TTS 音频处理（流式、PCM 直通、MP3 解码）
 ├── app/openclaw/                  # OpenClaw 设备身份存储（Ed25519 密钥）
 ├── skills/xiaoai-tts/             # Agent 工具：通过 HTTP API 控制小爱播放
@@ -171,12 +174,27 @@ OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR �
 **路由规则**（`before_wakeup` 返回值）:
 - `"xiaozhi"` → 走小智流程
 - `"openclaw"` → 走 OpenClaw 连续对话
+- `"xai"` → 走 xAI Grok Voice 全双工对话
 - `None` → 不处理（用户自行处理）
 
 **边界约束**:
 - 它是"小智唤醒会话状态机"，不是通用事件总线
 - 只允许缓存 `on_speech` / `on_silence` 等外部探测信号
 - 不要缓存 `on_wakeup` / `on_interrupt` 等控制步骤
+
+### XaiRealtimeClient / XaiConversationController
+
+xAI 协议层与设备全双工策略分离：
+
+- `XaiRealtimeClient` 只负责 Bearer WebSocket、`session.update`、PCM/event 收发；单次会话断线即结束，不透明重连
+- `XaiConversationController` 使用 10ms audio clock，16k capture 经 Sonora AEC3 后按约 100ms 上行，16k render 升采样到 24k 播放
+- 输入、上行、下行队列最多缓存 300ms，溢出丢最旧帧
+- `speech_started` 使用 response generation + playback token 清队列并定向停止旧 PCM，旧 delta 不得进入新 response
+- AEC 初始化或运行失败时仅当前会话降级为逻辑半双工，不关闭 arecord；回复结束后清输入并等待 250ms 回声尾音
+- controller 独占 `AecProcessor` 与 playback token；外层只调用 `stop()`，不直接全局停止其 token
+- `xai.session` 承载可透传的高级 `session.update` 参数，但 16k PCM、JSON transport、`server_vad` 与 `grok-transcribe` 是本地链路不变量
+- 不要只把 `tools` 数组发给服务端；Custom Function Tools 必须同时实现 tool registry、调用参数校验、异步执行、`function_call_output` 回传和下一轮 `response.create`
+- xAI 官方参数与事件快照见 `docs/xai-speech-to-speech.md`
 
 ### XiaoAIConversationController (core/xiaoai_conversation.py)
 
@@ -231,6 +249,7 @@ HTTP REST API 服务器（aiohttp），端口可配（默认 9092）。
 | KWS | `audio/kws/sherpa.py` | Sherpa ONNX 关键词唤醒（信心度 2.0，阈值 0.2） |
 | ASR | `audio/asr/sherpa.py` | Sherpa SenseVoice 离线语音识别（懒加载，INT8 量化） |
 | TTS | `tts/doubao.py` | 豆包 TTS（流式/一次性，PCM/MP3 自适应） |
+| AEC | `native/src/aec.rs` | Sonora AEC3，16k mono、10ms PCM16 render/capture |
 
 ### Rust 原生扩展 (native/)
 
@@ -242,6 +261,7 @@ HTTP REST API 服务器（aiohttp），端口可配（默认 9092）。
 | `server.rs` | TCP :4399 WebSocket 服务器，处理音频流和事件路由 |
 | `python.rs` | Python 回调注册中心（`register_fn` / `call_fn`），跨语言调用 |
 | `tts/` | TTS 音频处理：HTTP 流式请求、MP3 解码、PCM 直通 |
+| `aec.rs` | Sonora AEC3 会话处理器，提供 render/capture/delay/reset/stats |
 
 ## 运行模式
 
@@ -272,6 +292,14 @@ XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 uv run main.py
 - config.py `before_wakeup` 按唤醒词路由到小智或 OpenClaw 连续对话
 - OpenClaw 连续对话：VAD → ASR → OpenClaw → TTS 循环
 - 退出关键词：config `openclaw.exit_keywords`
+
+### 模式 5: xAI Grok Realtime Voice
+```bash
+XAI_ENABLE=1 XAI_API_KEY=xai-xxx uv run main.py
+```
+- 启动 VAD + KWS，但不预热或强制检查本地 ASR
+- `before_wakeup` 返回 `"xai"` 后进入持续 PCM 全双工会话
+- `aec=True` 支持插话；`aec=False` 或 AEC 故障时降级为半双工
 
 ### 启用 API Server
 ```bash
@@ -306,6 +334,7 @@ API_SERVER_ENABLE=1 uv run main.py
 ### 兼容约束
 - `CLI` 环境变量不再作为功能开关，不要引入依赖 `CLI` 的运行时分支
 - `XIAOZHI_ENABLE=0` 时必须允许跳过 KWS 初始化
+- 仅 `XAI_ENABLE=1` 时不得要求 SenseVoice ASR 模型，且 `AUDIO_INPUT_ENABLE=false` 必须启动失败
 - `scripts/start.sh` 在仅小爱模式下不应检查 `core/models/` 下的模型文件
 
 ## 测试

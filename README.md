@@ -6,13 +6,13 @@
 
 [![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
 
-**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务、QwenPaw）的桥接器**
+**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务、QwenPaw、xAI Grok Voice）的桥接器**
 
 打破小爱音箱的封闭生态，灵活接入多种 AI 服务，提供 HTTP API 实现远程控制。
 
 [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
 
-[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+[📖 快速开始](#-快速开始) · [🎙️ Grok Voice](#️-xai-grok-realtime-voice) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
 
 > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
 
@@ -26,6 +26,7 @@
 | ------------------ | ------------------------------------------------------------------------------ |
 | 🔌 **OpenAI 兼容服务** | 接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等 `/v1/chat/completions` 服务 |
 | 🐾 **QwenPaw 集成**   | 接入 [QwenPaw](https://github.com/agentscope-ai/QwenPaw) HTTP Console 任务接口，支持指定 Agent 和会话 |
+| 🎙️ **Grok Voice 全双工** | 直连 xAI Realtime Voice，支持 Sonora AEC3 回声消除和语音插话打断 |
 | 🦞 **OpenClaw 集成** | 接入 [OpenClaw](https://github.com/openclaw/openclaw)，支持连续对话，可选豆包 TTS 或小爱原生 TTS  |
 | 🤖 **小智 AI 集成**    | 接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 实时音频流 |
 | 🎙️ **自定义唤醒词**     | 支持中英文，不同唤醒词可路由到不同 AI 服务或不同 OpenClaw Agent                                      |
@@ -52,7 +53,7 @@
 
 如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
 
-如果 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
+如果 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `xiaoai_asr`，或只启用 xAI Realtime Voice，只需要 `VAD + KWS`，不需要本地 ASR 模型。
 
 1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
 2. 解压模型文件（路径见下方具体部署方式）
@@ -96,7 +97,7 @@ cd open-xiaoai-bridge
 # Linux 还需要: pkg-config, patchelf
 
 # 启动（按需设置环境变量）
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 ./scripts/start.sh
+API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 XAI_ENABLE=1 ./scripts/start.sh
 
 # 启用 Client 鉴权（需与音箱端 token 一致）
 OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
@@ -110,6 +111,8 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
 | `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
 | `QWENPAW_ENABLE` | 启用 QwenPaw | 禁用        |
+| `XAI_ENABLE` | 启用 xAI Grok Realtime Voice | 禁用 |
+| `XAI_API_KEY` | xAI API Key，优先于 `config.py` | 空 |
 | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
 | `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
@@ -159,6 +162,9 @@ flowchart TB
             Xiaozhi["XiaoZhi<br/>小智协议客户端"]
             OpenclawMgr["OpenClawManager<br/>OpenClaw 网关客户端"]
             OpenclawConv["OpenClawConversation<br/>连续对话控制器"]
+            XaiClient["XaiRealtimeClient<br/>Realtime 协议客户端"]
+            XaiConv["XaiConversationController<br/>全双工音频控制器"]
+            AEC["Sonora AEC3<br/>回声消除"]
         end
 
         subgraph ServicesLayer["服务层（可选）"]
@@ -172,8 +178,9 @@ flowchart TB
         direction TB
         XiaozhiServer["xiaozhi-esp32-server"]
         OpenclawGW["OpenClaw Gateway"]
+        XaiAPI["xAI Realtime Voice API"]
         DoubaoTTS["豆包语音服务"]
-        XiaozhiServer ~~~ OpenclawGW ~~~ DoubaoTTS
+        XiaozhiServer ~~~ OpenclawGW ~~~ XaiAPI ~~~ DoubaoTTS
     end
 
     subgraph APIClients["🌐 API 客户端"]
@@ -221,6 +228,14 @@ flowchart TB
     OpenclawConv -.->|"发送消息"| OpenclawMgr
     OpenclawConv -.->|"播放回复"| TTSModule
 
+    %% ===== xAI Realtime Voice 链路（可选） =====
+    WakeupMgr -.->|"唤醒词路由"| XaiConv
+    GlobalStream -.->|"16k PCM 麦克风"| XaiConv
+    XaiConv -->|"render / capture 10ms"| AEC
+    XaiConv <-->|"持续 PCM / server VAD"| XaiClient
+    XaiClient <-->|"Bearer WebSocket"| XaiAPI
+    XaiConv -->|"24k PCM 播放"| XiaoaiPy
+
     %% ===== 播放回路 =====
     SpeakerMgr -->|"play()"| XiaoaiPy
     Codec -->|"播放音频"| XiaoaiPy
@@ -251,9 +266,10 @@ flowchart TB
     class AudioCapture,WSServer rust
     class MainApp,WakeupMgr,XiaoAIConv,SpeakerMgr,Config,GlobalStream core
     class VAD,KWS,ASR,Codec audio
-    class XiaoaiPy,Xiaozhi,OpenclawMgr,OpenclawConv connector
+    class XiaoaiPy,Xiaozhi,OpenclawMgr,OpenclawConv,XaiClient,XaiConv connector
+    class AEC audio
     class APIServer,TTSModule api
-    class XiaozhiServer,OpenclawGW,DoubaoTTS,Curl,XiaoaiTTS external
+    class XiaozhiServer,OpenclawGW,XaiAPI,DoubaoTTS,Curl,XiaoaiTTS external
 ```
 
 ### 工作流程
@@ -341,6 +357,58 @@ curl -X POST http://localhost:9092/api/tts/doubao \
 # 打断播放
 curl -X POST http://localhost:9092/api/interrupt
 ```
+
+***
+
+## 🎙️ xAI Grok Realtime Voice
+
+xAI 模式与 OpenClaw / OpenAI / QwenPaw 的“本地 ASR → 文本 Agent → TTS”半双工链路不同。它会保持一条 Realtime WebSocket，持续上传 16 kHz PCM，并直接播放服务端返回的语音。
+
+```bash
+XAI_ENABLE=1 XAI_API_KEY=xai-xxx uv run main.py
+```
+
+在 `config.py` 中配置：
+
+```python
+"xai": {
+    "api_url": "wss://api.x.ai/v1/realtime?model=grok-voice-latest",
+    "api_key": "",  # 推荐使用 XAI_API_KEY
+    "voice": "ara",
+    "instructions": "你是一个有帮助的语音助手，请用简洁口语中文回答。",
+    "sample_rate": 16000,
+    "exit_keywords": ["退出", "停止", "再见"],
+    "idle_timeout": 20,
+    "aec": True,
+    "aec_delay_ms": 150,
+    "greeting": True,
+    "session": {
+        "reasoning": {"effort": "none"},
+        "turn_detection": {
+            "threshold": 0.85,
+            "silence_duration_ms": 700,
+            "prefix_padding_ms": 333,
+        },
+        "audio": {
+            "input": {"transcription": {"language_hint": "zh"}},
+            "output": {"speed": 1.0},
+        },
+        "replace": {},
+    },
+}
+```
+
+`before_wakeup` 返回 `"xai"` 即进入 Grok Voice。默认示例使用“你好 grok”或“召唤 grok”。
+
+- `aec=True`：使用 host 侧 Sonora AEC3，播放期间继续上传麦克风，可语音插话。
+- `aec=False`：AI 播放期间暂停上传并在结束后等待 250 ms 回声尾音，作为稳定的半双工降级模式。
+- `aec_delay_ms`：音箱播放到麦克风采集之间的延迟提示，范围 `0..500`；不同网络和设备可从默认 `150` 开始调整。
+- WebSocket 断线会结束当前会话并恢复 KWS，不会透明重连丢失上下文；下次唤醒建立新会话。
+- 输入、上行和下行音频均限制为最多 300 ms backlog，网络阻塞时丢弃最旧音频，避免补播陈旧语音。
+- `session` 是高级 `session.update` 参数块；`reasoning`、VAD 阈值、转写提示、语速和发音替换等可直接配置。16 kHz PCM、JSON transport、`server_vad` 和 `grok-transcribe` 由设备链路强制保证。
+- `session.tools` 暂不接受，避免出现模型发起 function call 但本地没有执行器的死链路；后续 Custom Function Tools 将以独立 registry/executor 接入。
+
+完整的 xAI Speech-to-Speech 参数与事件参考见 [docs/xai-speech-to-speech.md](docs/xai-speech-to-speech.md)。
 
 ***
 
@@ -572,7 +640,7 @@ async def before_wakeup(speaker, text, source, app):
     # 返回 None → 交给小爱原生处理
 ```
 
-**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"qwenpaw"` → QwenPaw 连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` / `app.send_to_qwenpaw()` 等方法）
+**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"qwenpaw"` → QwenPaw 连续对话，`"xai"` → xAI Grok Voice 全双工对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` / `app.send_to_qwenpaw()` 等方法）
 
 ### 🧠 多 Agent 路由 — 一个唤醒词，一个专属 Agent
 
@@ -784,7 +852,7 @@ APP_CONFIG = {
 1. **模型文件在哪下载？**
 
     小智 AI 和 `local_asr` 模式需要 `VAD + KWS + ASR` 模型文件。  
-    `xiaoai_asr` 模式只需要 `VAD + KWS`。
+    `xiaoai_asr` 和 xAI Realtime Voice 模式只需要 `VAD + KWS`。
 
     详见[快速开始 - Docker Compose](#-docker-compose推荐) 或 [本地编译](#-本地编译) 章节。
 
@@ -844,7 +912,7 @@ APP_CONFIG = {
 
 3. **如何打断 AI 的回答？**
 
-    直接喊"小爱同学"即可打断小智或 OpenClaw 的回答。
+    直接喊"小爱同学"即可打断所有会话。xAI 开启 AEC 时也可直接插话，由 server VAD 停止当前 Grok Voice 播放。
 
 4. **话没说完 AI 就开始回答？**
 
