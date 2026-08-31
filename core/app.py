@@ -26,6 +26,7 @@ from core.services.protocols.typing import (
 from core.openclaw import OpenClawManager
 from core.openai import OpenAIManager
 from core.qwenpaw import QwenPawManager
+from core.xai_realtime import XaiRealtimeSettings
 from core.services.api_server import APIServer
 
 
@@ -41,6 +42,7 @@ class MainApp:
         enable_openclaw: bool = False,
         enable_openai: bool = False,
         enable_qwenpaw: bool = False,
+        enable_xai: bool = False,
     ):
         """Get singleton instance.
 
@@ -48,6 +50,7 @@ class MainApp:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection (default: True)
             enable_openclaw: Whether to enable OpenClaw connection (default: False)
             enable_qwenpaw: Whether to enable QwenPaw connection (default: False)
+            enable_xai: Whether to enable xAI Realtime Voice (default: False)
         """
         if cls._instance is None:
             cls._instance = MainApp(
@@ -55,6 +58,7 @@ class MainApp:
                 enable_openclaw=enable_openclaw,
                 enable_openai=enable_openai,
                 enable_qwenpaw=enable_qwenpaw,
+                enable_xai=enable_xai,
             )
         return cls._instance
 
@@ -64,6 +68,7 @@ class MainApp:
         enable_openclaw: bool = False,
         enable_openai: bool = False,
         enable_qwenpaw: bool = False,
+        enable_xai: bool = False,
     ):
         """Initialize the main application.
 
@@ -71,6 +76,7 @@ class MainApp:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection
             enable_openclaw: Whether to enable OpenClaw connection
             enable_qwenpaw: Whether to enable QwenPaw connection
+            enable_xai: Whether to enable xAI Realtime Voice
         """
         if MainApp._instance is not None:
             raise Exception("MainApp is singleton, use instance() to get instance")
@@ -84,6 +90,7 @@ class MainApp:
         self._enable_openclaw = enable_openclaw
         self._enable_openai = enable_openai
         self._enable_qwenpaw = enable_qwenpaw
+        self._enable_xai = enable_xai
 
         # Device state
         self.device_state = DeviceState.IDLE
@@ -136,11 +143,16 @@ class MainApp:
             "AUDIO_INPUT_ENABLE", "true"
         ).strip().lower() in ("true", "1", "yes", "on")
         
-        if not audio_input_enabled and self._enable_xiaozhi:
+        if not audio_input_enabled and (self._enable_xiaozhi or self._enable_xai):
+            enabled_name = "XiaoZhi" if self._enable_xiaozhi else "xAI Realtime Voice"
             raise RuntimeError(
-                "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but XiaoZhi is enabled. "
-                "Either enable audio input or disable XiaoZhi."
+                "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but "
+                f"{enabled_name} is enabled. Either enable audio input or disable it."
             )
+
+        if self._enable_xai:
+            # 尽早暴露缺少 API key、非法 URL 等配置问题；实际会话仍会读取热重载配置。
+            XaiRealtimeSettings.from_config(self.config)
         
         if not audio_input_enabled:
             local_asr_backends = []
@@ -219,6 +231,7 @@ class MainApp:
             or self._enable_openclaw
             or self._enable_openai
             or self._enable_qwenpaw
+            or self._enable_xai
         ):
             # Check audio input via env var (same as Rust), default True
             # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
@@ -350,6 +363,11 @@ class MainApp:
 
     # State management
 
+    def set_device_state(self, state: str):
+        """统一更新设备状态，供全双工会话等非小智控制器使用。"""
+        self.device_state = state
+        logger.device_state(state, module="MainApp")
+
     def set_chat_message(self, role, message):
         """Set chat message."""
         self.current_text = message
@@ -368,6 +386,17 @@ class MainApp:
         """Shutdown the application."""
         self.shutdown_requested = True
         self.running = False
+
+        from core.wakeup_session import EventManager
+
+        if self.loop and self.loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                EventManager.stop_xai_conversation(), self.loop
+            )
+            try:
+                future.result(timeout=3)
+            except Exception as exc:
+                logger.warning(f"[MainApp] Failed to stop xAI session: {exc}")
 
         if self.xiaozhi:
             self.xiaozhi.shutdown()

@@ -32,6 +32,7 @@ async def before_wakeup(speaker, text, source, app):
         "openclaw" — 进入 OpenClaw 连续对话流程
         "openai"   — 进入 OpenAI 兼容服务连续对话流程（例如 Hermes Agent API Server）
         "qwenpaw"  — 进入 QwenPaw 连续对话流程
+        "xai"      — 进入 xAI Grok Realtime Voice 全双工对话
         "xiaozhi"  — 进入小智 AI 流程
         None       — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
 
@@ -79,6 +80,10 @@ async def before_wakeup(speaker, text, source, app):
             await speaker.play(text="小爪来了")
             return "qwenpaw"
 
+        if "grok" in text.lower():
+            await speaker.play(text="Grok 来了")
+            return "xai"
+
         if "小智" in text:
             await speaker.play(text="小智来了")
             return "xiaozhi"
@@ -103,6 +108,10 @@ async def before_wakeup(speaker, text, source, app):
         if text == "召唤小爪":
             await speaker.abort_xiaoai()
             return "qwenpaw"  # QwenPaw continuous conversation
+
+        if text.lower() == "召唤 grok":
+            await speaker.abort_xiaoai()
+            return "xai"  # xAI Realtime Voice
 
         if text == "召唤小智":
             await speaker.abort_xiaoai()
@@ -140,6 +149,7 @@ async def after_wakeup(speaker, source=None, session_key=None):
         - 'openclaw': OpenClaw 连续对话退出
         - 'openai': OpenAI 兼容服务连续对话退出
         - 'qwenpaw': QwenPaw 连续对话退出
+        - 'xai': xAI Grok Realtime Voice 退出
     - session_key: 当前 OpenClaw/OpenAI/QwenPaw 后端 session_key
         可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
     """
@@ -163,6 +173,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
         await speaker.play(text="小黑，再见")
     if source == "qwenpaw":
         await speaker.play(text="小爪，再见")
+    if source == "xai":
+        await speaker.play(text="Grok，再见")
     if source == "xiaozhi":
         await speaker.play(text="小智，再见")
 
@@ -179,6 +191,8 @@ APP_CONFIG = {
             "小黑你好",
             "你好小爪",
             "小爪你好",
+            "你好 grok",
+            "grok 你好",
         ],
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
@@ -240,6 +254,19 @@ APP_CONFIG = {
         "WEBSOCKET_ACCESS_TOKEN": "", #（可选）一般用不到这个值
         "DEVICE_ID": "", #（可选）默认自动生成
         "VERIFICATION_CODE": "", # 首次登陆时，验证码会在这里更新
+    },
+    # xAI Grok Realtime Voice Configuration
+    "xai": {
+        "api_url": "wss://api.x.ai/v1/realtime?model=grok-voice-latest",
+        "api_key": "",  # 也可通过 XAI_API_KEY 环境变量设置，环境变量优先
+        "voice": "ara",
+        "instructions": "你是一个有帮助的语音助手，请用简洁口语中文回答。",
+        "sample_rate": 16000,
+        "exit_keywords": ["退出", "停止", "再见"],
+        "idle_timeout": 20,
+        "aec": True,
+        "aec_delay_ms": 150,
+        "greeting": True,
     },
     "xiaoai": {
         "continuous_conversation_mode": True,

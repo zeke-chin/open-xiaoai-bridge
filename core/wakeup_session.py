@@ -22,6 +22,8 @@ class WakeupSessionManager:
         self._openai_task: asyncio.Task | None = None
         self._qwenpaw_controller = None
         self._qwenpaw_task: asyncio.Task | None = None
+        self._xai_controller = None
+        self._xai_task: asyncio.Task | None = None
         self._xiaozhi_future: asyncio.Future | None = None
 
     def _get_loop(self):
@@ -76,6 +78,10 @@ class WakeupSessionManager:
             self._qwenpaw_controller.stop()
         if self._qwenpaw_task and not self._qwenpaw_task.done():
             loop.call_soon_threadsafe(self._qwenpaw_task.cancel)
+        if self._xai_controller and self._xai_controller.is_active():
+            self._xai_controller.stop()
+        if self._xai_task and not self._xai_task.done():
+            loop.call_soon_threadsafe(self._xai_task.cancel)
 
         asyncio.run_coroutine_threadsafe(self._stop_device_playback(), loop)
 
@@ -171,6 +177,16 @@ class WakeupSessionManager:
             await self._start_openai_conversation()
         elif should_wakeup == "qwenpaw":
             await self._start_qwenpaw_conversation()
+        elif should_wakeup == "xai":
+            app = get_app()
+            if not app or not getattr(app, "_enable_xai", False):
+                logger.warning(
+                    "before_wakeup 返回 xai，但 XAI_ENABLE 未启用",
+                    module="Wakeup",
+                )
+                await self._call_after_wakeup("xai")
+            else:
+                await self._start_xai_conversation()
         elif should_wakeup == "xiaozhi":
             self.on_wakeup()
 
@@ -250,6 +266,57 @@ class WakeupSessionManager:
             if kws:
                 kws.resume()
 
+    async def _start_xai_conversation(self):
+        """启动独立的 xAI Realtime Voice 全双工会话。"""
+        from core.xai_conversation import XaiConversationController
+
+        kws = get_kws()
+        if kws:
+            kws.pause()
+        try:
+            self._xai_controller = XaiConversationController()
+            self._xai_task = asyncio.create_task(self._xai_controller.start())
+            await self._xai_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error(
+                f"xAI conversation failed: {type(exc).__name__}: {exc}",
+                module="Wakeup",
+            )
+        finally:
+            self._xai_controller = None
+            self._xai_task = None
+            if kws:
+                kws.resume()
+
+    async def _call_after_wakeup(self, source: str):
+        after_wakeup = self.config.get_app_config("wakeup.after_wakeup")
+        speaker = get_speaker()
+        if after_wakeup and speaker:
+            try:
+                await after_wakeup(speaker, source=source)
+            except Exception as exc:
+                logger.warning(
+                    f"after_wakeup failed for {source}: {exc}",
+                    module="Wakeup",
+                )
+
+    async def stop_xai_conversation(self):
+        """停止并等待 xAI 会话清理完成，供应用 shutdown 使用。"""
+        if self._xai_controller and self._xai_controller.is_active():
+            self._xai_controller.stop()
+        task = self._xai_task
+        if task and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=2)
+            except TimeoutError:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
     async def reset_all_sessions(self):
         """Reset all active sessions before starting a new one.
 
@@ -277,6 +344,8 @@ class WakeupSessionManager:
             self._openai_controller.stop()
         if self._qwenpaw_controller and self._qwenpaw_controller.is_active():
             self._qwenpaw_controller.stop()
+        if self._xai_controller and self._xai_controller.is_active():
+            self._xai_controller.stop()
 
         # Stop all audio playback on the device
         await self._stop_device_playback()

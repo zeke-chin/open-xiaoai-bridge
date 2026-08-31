@@ -29,6 +29,7 @@ class WakeupKeywordStartupTest(unittest.TestCase):
                 "OPENCLAW_ENABLE": "",
                 "OPENCLAW_ENABLED": "",
                 "OPENAI_ENABLE": "1",
+                "XAI_ENABLE": "",
             },
             clear=False,
         ):
@@ -43,11 +44,45 @@ class WakeupKeywordStartupTest(unittest.TestCase):
 
         self.assertIn("OPENAI_ENABLE_VALUE", start_sh)
         self.assertIn("QWENPAW_ENABLE_VALUE", start_sh)
+        self.assertIn("XAI_ENABLE_VALUE", start_sh)
         self.assertIn('[[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
         self.assertIn('[[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+        self.assertIn('[[ "$XAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
         self.assertIn('${OPENAI_ENABLE:-}', dockerfile)
         self.assertIn('${QWENPAW_ENABLE:-}', dockerfile)
+        self.assertIn('${XAI_ENABLE:-}', dockerfile)
         self.assertIn('python core/services/audio/kws/keywords.py', dockerfile)
+
+    def test_keyword_generation_enabled_for_xai(self):
+        spec = importlib.util.spec_from_file_location(
+            "kws_keywords_for_xai_test",
+            ROOT / "core/services/audio/kws/keywords.py",
+        )
+        keywords = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(keywords)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "XIAOZHI_ENABLE": "",
+                "OPENCLAW_ENABLE": "",
+                "OPENCLAW_ENABLED": "",
+                "OPENAI_ENABLE": "",
+                "QWENPAW_ENABLE": "",
+                "XAI_ENABLE": "1",
+            },
+            clear=False,
+        ):
+            should_run, reason = keywords.should_generate_keywords()
+
+        self.assertTrue(should_run)
+        self.assertEqual("", reason)
+
+    def test_xai_only_does_not_require_local_asr(self):
+        start_sh = (ROOT / "scripts/start.sh").read_text(encoding="utf8")
+        self.assertIn("NEED_LOCAL_ASR", start_sh)
+        self.assertIn("xAI 使用服务端语音能力", start_sh)
+        self.assertNotIn("('XAI_ENABLE','xai')", start_sh)
 
 
 class XiaoAIWakeupKeywordTest(unittest.TestCase):

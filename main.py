@@ -39,7 +39,7 @@ enable_api_server = False  # 是否开启 API Server
 
 def setup_config():
     """解析命令行参数和环境变量"""
-    global connect_xiaozhi, enable_api_server, enable_xiaozhi, enable_openclaw, enable_openai, enable_qwenpaw
+    global connect_xiaozhi, enable_api_server, enable_xiaozhi, enable_openclaw, enable_openai, enable_qwenpaw, enable_xai
 
     parser = argparse.ArgumentParser(description="小爱音箱接入 Open XiaoAI")
     parser.parse_args()
@@ -60,6 +60,11 @@ def setup_config():
         "true",
         "yes",
     )
+    enable_xai = os.environ.get("XAI_ENABLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     # 计算 AUDIO_INPUT_ENABLE 实际生效的值（默认 1/true）
     audio_input_enabled = os.environ.get("AUDIO_INPUT_ENABLE", "1").strip().lower() in ("1", "true", "yes", "on")
@@ -69,6 +74,7 @@ def setup_config():
                 f"OPENCLAW_ENABLE={os.environ.get('OPENCLAW_ENABLE') or os.environ.get('OPENCLAW_ENABLED') or 'not set (disabled)'}, "
                 f"OPENAI_ENABLE={os.environ.get('OPENAI_ENABLE') or 'not set (disabled)'}, "
                 f"QWENPAW_ENABLE={os.environ.get('QWENPAW_ENABLE') or 'not set (disabled)'}, "
+                f"XAI_ENABLE={os.environ.get('XAI_ENABLE') or 'not set (disabled)'}, "
                 f"AUDIO_INPUT_ENABLE={1 if audio_input_enabled else 0}")
     logger.info(f"[Main] Using config file: {config_path}")
 
@@ -92,6 +98,10 @@ def setup_config():
         module="Main",
     )
     logger.info(
+        f"xAI Realtime Voice: {'启用' if enable_xai else '禁用'}",
+        module="Main",
+    )
+    logger.info(
         f"API Server: {'启用' if enable_api_server else '禁用'}",
         module="Main",
     )
@@ -103,7 +113,7 @@ def run_services(xiaozhi_mode: bool = False):
     Args:
         xiaozhi_mode: 是否启动小智 AI 完整服务（包括 VAD/KWS/GUI）
     """
-    global main_app_instance, enable_api_server, enable_openclaw, enable_openai, enable_qwenpaw
+    global main_app_instance, enable_api_server, enable_openclaw, enable_openai, enable_qwenpaw, enable_xai
 
     # 统一使用 MainApp 管理所有服务
     main_app_instance = MainApp.instance(
@@ -111,6 +121,7 @@ def run_services(xiaozhi_mode: bool = False):
         enable_openclaw=enable_openclaw,
         enable_openai=enable_openai,
         enable_qwenpaw=enable_qwenpaw,
+        enable_xai=enable_xai,
     )
     main_app_instance.run(enable_api_server=enable_api_server)
 

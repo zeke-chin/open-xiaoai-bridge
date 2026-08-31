@@ -25,6 +25,7 @@ XIAOZHI_ENABLED=$(printf '%s' "${XIAOZHI_ENABLE:-}" | tr '[:upper:]' '[:lower:]'
 OPENCLAW_ENABLE_VALUE=$(printf '%s' "${OPENCLAW_ENABLE:-${OPENCLAW_ENABLED:-}}" | tr '[:upper:]' '[:lower:]')
 OPENAI_ENABLE_VALUE=$(printf '%s' "${OPENAI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
 QWENPAW_ENABLE_VALUE=$(printf '%s' "${QWENPAW_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
+XAI_ENABLE_VALUE=$(printf '%s' "${XAI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
 
 # 1. 检查 uv
 if ! command -v uv &> /dev/null; then
@@ -52,7 +53,7 @@ ONNX_LIB_DIR="$(uv run python -c "from pathlib import Path; import onnxruntime; 
     export DYLD_LIBRARY_PATH="${ONNX_LIB_DIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 
 # 3. 检查 KWS 相关模型和关键词文件
-if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]; then
+if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$XAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]; then
     MODEL_DIR="core/models"
     REQUIRED_MODELS=("silero_vad.onnx" "encoder.onnx" "decoder.onnx" "joiner.onnx" "tokens.txt" "bpe.model")
     MISSING_MODELS=()
@@ -63,8 +64,9 @@ if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ 
         fi
     done
 
-    # Check ASR model directory (sherpa-onnx-sense-voice-*)
-    if ! ls "$MODEL_DIR"/sherpa-onnx-sense-voice-*/model.int8.onnx &>/dev/null; then
+    NEED_LOCAL_ASR=$(OPENCLAW_EFFECTIVE_ENABLE="$OPENCLAW_ENABLE_VALUE" uv run python -c "from core.utils.config_loader import load_config_module; c=getattr(load_config_module(),'APP_CONFIG',{}); import os; enabled=lambda k: os.environ.get(k,'').lower() in ('1','true','yes'); print('1' if any(enabled(env) and c.get(name,{}).get('input_mode','local_asr') == 'local_asr' for env,name in [('OPENCLAW_EFFECTIVE_ENABLE','openclaw'),('OPENAI_ENABLE','openai'),('QWENPAW_ENABLE','qwenpaw')]) else '0')" 2>/dev/null || printf '0')
+    # xAI 使用服务端语音能力；仅 local_asr 文本后端要求 SenseVoice。
+    if [ "$NEED_LOCAL_ASR" = "1" ] && ! ls "$MODEL_DIR"/sherpa-onnx-sense-voice-*/model.int8.onnx &>/dev/null; then
         MISSING_MODELS+=("sherpa-onnx-sense-voice-*/model.int8.onnx")
     fi
 
@@ -119,6 +121,10 @@ if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ 
                 exit 1
             fi
         done
+        if [ "$NEED_LOCAL_ASR" = "1" ] && ! ls "$MODEL_DIR"/sherpa-onnx-sense-voice-*/model.int8.onnx &>/dev/null; then
+            echo -e "${RED}错误: ASR 模型下载或解压失败${NC}"
+            exit 1
+        fi
 
         echo -e "${GREEN}✓ 模型文件下载并解压完成${NC}"
     fi
@@ -142,7 +148,7 @@ if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ 
         exit 1
     fi
 else
-    echo -e "${YELLOW}⚠ 小智、OpenClaw、OpenAI 和 QwenPaw 均未启用，跳过模型检查和关键词预生成${NC}"
+    echo -e "${YELLOW}⚠ 小智、OpenClaw、OpenAI、QwenPaw 和 xAI 均未启用，跳过模型检查和关键词预生成${NC}"
 fi
 
 # 4. 检查配置
