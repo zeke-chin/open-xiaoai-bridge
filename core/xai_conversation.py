@@ -88,6 +88,7 @@ class XaiConversationController:
         self._idle_deadline: float | None = None
         self._resume_uplink_at = 0.0
         self._after_wakeup_called = False
+        self._call_after_wakeup_on_cleanup = True
 
     def is_active(self) -> bool:
         return self.active
@@ -96,6 +97,7 @@ class XaiConversationController:
         if self.active:
             return
         self.active = True
+        self._call_after_wakeup_on_cleanup = True
         self._loop = asyncio.get_running_loop()
         self._stop_event.clear()
         self._set_device_state(DeviceState.CONNECTING)
@@ -128,8 +130,10 @@ class XaiConversationController:
         finally:
             await self._cleanup()
 
-    def stop(self) -> None:
+    def stop(self, *, call_after_wakeup: bool = True) -> None:
         """线程安全地请求结束会话，并立即定向停止当前 PCM。"""
+        if not call_after_wakeup:
+            self._call_after_wakeup_on_cleanup = False
         if not self.active:
             return
         self.active = False
@@ -174,7 +178,8 @@ class XaiConversationController:
         with contextlib.suppress(Exception):
             await self._native.start_recording()
         self._set_device_state(DeviceState.IDLE)
-        await self._call_after_wakeup()
+        if self._call_after_wakeup_on_cleanup:
+            await self._call_after_wakeup()
         logger.info("退出 Grok Voice 实时对话", module="xAI Conv")
 
     def _initialize_aec(self) -> None:

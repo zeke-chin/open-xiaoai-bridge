@@ -210,6 +210,13 @@ class XaiConversationControllerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.controller.client.closed)
         self.assertEqual(1, self.native.recording_started)
 
+    async def test_interrupt_can_defer_after_wakeup_until_device_cleanup(self):
+        self.controller.active = True
+        self.controller.stop(call_after_wakeup=False)
+        await self.controller._cleanup()
+
+        self.assertFalse(self.controller._after_wakeup_called)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,6 +52,12 @@ class WakeupSessionManager:
         await open_xiaoai_server.stop_playing()
         await open_xiaoai_server.start_recording()
 
+    async def _finish_interrupt(self, call_xai_after_wakeup: bool) -> None:
+        """先完成设备停播与录音恢复，再执行 xAI 结束钩子。"""
+        await self._stop_device_playback()
+        if call_xai_after_wakeup:
+            await self._call_after_wakeup("xai")
+
     def on_interrupt(self):
         logger.info("[Wakeup] XiaoAI wakeup — interrupting active sessions")
 
@@ -78,12 +84,22 @@ class WakeupSessionManager:
             self._qwenpaw_controller.stop()
         if self._qwenpaw_task and not self._qwenpaw_task.done():
             loop.call_soon_threadsafe(self._qwenpaw_task.cancel)
-        if self._xai_controller and self._xai_controller.is_active():
-            self._xai_controller.stop()
+        xai_needs_after_wakeup = bool(
+            self._xai_controller
+            and (
+                self._xai_controller.is_active()
+                or (self._xai_task and not self._xai_task.done())
+            )
+        )
+        if xai_needs_after_wakeup:
+            self._xai_controller.stop(call_after_wakeup=False)
         if self._xai_task and not self._xai_task.done():
             loop.call_soon_threadsafe(self._xai_task.cancel)
 
-        asyncio.run_coroutine_threadsafe(self._stop_device_playback(), loop)
+        asyncio.run_coroutine_threadsafe(
+            self._finish_interrupt(xai_needs_after_wakeup),
+            loop,
+        )
 
         from core.xiaoai import XiaoAI
         XiaoAI.stop_conversation()

@@ -62,6 +62,60 @@ class XaiWakeupDispatchTest(unittest.IsolatedAsyncioTestCase):
 
         manager._start_xai_conversation.assert_awaited_once()
 
+    async def test_interrupt_stops_device_before_xai_after_wakeup(self):
+        events: list[str] = []
+        manager = WakeupSessionManager()
+
+        class Controller:
+            def is_active(self):
+                return True
+
+            def stop(self, *, call_after_wakeup=True):
+                events.append(f"controller.stop:{call_after_wakeup}")
+
+        class Speaker:
+            async def stop_device_audio(self):
+                events.append("device.stop")
+
+        async def after_wakeup(_speaker, source=None):
+            events.append(f"after_wakeup:{source}")
+
+        class Config:
+            def get_app_config(self, path, default=None):
+                if path == "wakeup.after_wakeup":
+                    return after_wakeup
+                return default
+
+        manager._xai_controller = Controller()
+        manager.config = Config()
+        loop = asyncio.get_running_loop()
+        app = mock.Mock(loop=loop)
+
+        async def start_recording():
+            events.append("recording.start")
+
+        with (
+            mock.patch("core.wakeup_session.get_app", return_value=app),
+            mock.patch("core.wakeup_session.get_speaker", return_value=Speaker()),
+            mock.patch("open_xiaoai_server.start_recording", start_recording),
+            mock.patch("core.xiaoai.XiaoAI.stop_conversation"),
+        ):
+            manager.on_interrupt()
+            for _ in range(20):
+                if "after_wakeup:xai" in events:
+                    break
+                await asyncio.sleep(0)
+
+        self.assertEqual(
+            [
+                "controller.stop:False",
+                "device.stop",
+                "recording.start",
+                "after_wakeup:xai",
+            ],
+            events,
+        )
+
 
 class XaiStartupValidationTest(unittest.TestCase):
     def tearDown(self):
