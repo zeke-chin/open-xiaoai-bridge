@@ -25,6 +25,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 tokio-stream = "0.1"
 symphonia = { version = "0.5", features = ["mp3", "ogg", "vorbis", "pcm", "wav"] }
 base64 = "0.22"
+sonora = "=0.2.0"
 
 # Opus codec (statically linked)
 audiopus_sys = { version = "0.2", features = ["static"] }

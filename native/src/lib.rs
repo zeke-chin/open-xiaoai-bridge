@@ -7,6 +7,7 @@ use serde_json::json;
 use server::AppServer;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub mod aec;
 pub mod macros;
 pub mod opus;
 pub mod python;
@@ -82,9 +83,7 @@ fn run_shell(py: Python, script: String, timeout_millis: f64) -> PyResult<Bound<
 fn stop_playing(py: Python) -> PyResult<Bound<PyAny>> {
     PLAYER_READY.store(false, Ordering::SeqCst);
     pyo3_async_runtimes::tokio::future_into_py(py, async {
-        let _ = RPC::instance()
-            .call_remote("stop_play", None, None)
-            .await;
+        let _ = RPC::instance().call_remote("stop_play", None, None).await;
         Ok(())
     })
 }
@@ -132,8 +131,6 @@ fn start_recording(py: Python) -> PyResult<Bound<PyAny>> {
     })
 }
 
-
-
 #[pymodule]
 fn open_xiaoai_server(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(start_server, &m)?)?;
@@ -143,6 +140,7 @@ fn open_xiaoai_server(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(start_playing, &m)?)?;
     m.add_function(wrap_pyfunction!(stop_recording, &m)?)?;
     m.add_function(wrap_pyfunction!(start_recording, &m)?)?;
+    crate::aec::init_module(&m)?;
     crate::opus::init_module(&m)?;
     crate::python::init_module(&m)?;
     crate::tts::init_module(&m)?;

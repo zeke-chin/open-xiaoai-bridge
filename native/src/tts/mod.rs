@@ -107,6 +107,30 @@ async fn send_pcm(pcm: Vec<u8>, token: u64) -> bool {
     is_playback_session_active(token)
 }
 
+/// Send one already-paced PCM chunk through the shared device playback channel.
+/// The caller owns pacing and the playback token prevents stale chunks from
+/// leaking into a newer response.
+#[pyfunction]
+pub fn play_pcm_chunk(
+    py: Python<'_>,
+    pcm: Py<PyBytes>,
+    playback_token: u64,
+) -> PyResult<Bound<'_, PyAny>> {
+    let pcm = pcm.as_bytes(py).to_vec();
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        if !is_playback_session_active(playback_token) {
+            return Ok(false);
+        }
+        crate::ensure_player_ready().await;
+        Ok(send_pcm(pcm, playback_token).await)
+    })
+}
+
+#[pyfunction]
+pub fn playback_session_active(token: u64) -> bool {
+    is_playback_session_active(token)
+}
+
 async fn sleep_until_playback_finishes(remaining_ms: u128, token: u64) {
     if remaining_ms == 0 {
         return;
@@ -1021,6 +1045,7 @@ pub fn stop_tts_playback(token: Option<u64>) {
     if !cancelled {
         return;
     }
+    crate::PLAYER_READY.store(false, Ordering::SeqCst);
     // Kill remote aplay so any already-buffered audio stops immediately.
     let rt = pyo3_async_runtimes::tokio::get_runtime();
     rt.spawn(async {
@@ -1030,8 +1055,17 @@ pub fn stop_tts_playback(token: Option<u64>) {
     });
 }
 
+/// Generic name for token-scoped PCM/TTS cancellation.
+#[pyfunction]
+#[pyo3(signature = (token=None))]
+pub fn stop_playback_session(token: Option<u64>) {
+    stop_tts_playback(token);
+}
+
 pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(begin_playback_session, m)?)?;
+    m.add_function(wrap_pyfunction!(play_pcm_chunk, m)?)?;
+    m.add_function(wrap_pyfunction!(playback_session_active, m)?)?;
     m.add_function(wrap_pyfunction!(tts_stream_play, m)?)?;
     m.add_function(wrap_pyfunction!(tts_stream_play_background, m)?)?;
     m.add_function(wrap_pyfunction!(tts_play, m)?)?;
@@ -1039,6 +1073,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tts_stream_collect, m)?)?;
     m.add_function(wrap_pyfunction!(decode_audio, m)?)?;
     m.add_function(wrap_pyfunction!(stop_tts_playback, m)?)?;
+    m.add_function(wrap_pyfunction!(stop_playback_session, m)?)?;
     m.add_function(wrap_pyfunction!(play_audio_file, m)?)?;
     Ok(())
 }
