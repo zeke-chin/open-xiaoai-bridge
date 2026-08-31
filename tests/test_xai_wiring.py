@@ -78,9 +78,12 @@ class XaiStartupValidationTest(unittest.TestCase):
 
     def test_xai_rejects_missing_api_key_before_starting_threads(self):
         app = MainApp(enable_xiaozhi=False, enable_xai=True)
-        with mock.patch.dict(
-            os.environ,
-            {"AUDIO_INPUT_ENABLE": "true", "XAI_API_KEY": ""},
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AUDIO_INPUT_ENABLE": "true", "XAI_API_KEY": ""},
+            ),
+            mock.patch.object(app.config, "get_app_config", return_value={}),
         ):
             with self.assertRaisesRegex(ValueError, "API key"):
                 app.run()
