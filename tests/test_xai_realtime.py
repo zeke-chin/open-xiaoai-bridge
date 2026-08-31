@@ -61,6 +61,14 @@ class XaiRealtimeSettingsTest(unittest.TestCase):
                 sample_rate=24000,
             ).validate()
 
+    def test_tools_require_a_tool_executor(self):
+        with self.assertRaisesRegex(ValueError, "Custom Function Tools"):
+            XaiRealtimeSettings(
+                api_url="wss://example.test/realtime",
+                api_key="key",
+                session={"tools": []},
+            ).validate()
+
 
 class XaiRealtimeClientTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -91,6 +99,10 @@ class XaiRealtimeClientTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 16000,
                 self.ws.sent[0]["session"]["audio"]["input"]["format"]["rate"],
+            )
+            self.assertEqual(
+                "grok-transcribe",
+                self.ws.sent[0]["session"]["audio"]["input"]["transcription"]["model"],
             )
             await self.ws.incoming.put(json.dumps({"type": "session.updated"}))
             await connect_task
@@ -138,6 +150,37 @@ class XaiRealtimeClientTest(unittest.IsolatedAsyncioTestCase):
             await self.ws.incoming.put(StopAsyncIteration)
             with self.assertRaisesRegex(RuntimeError, "就绪前关闭"):
                 await connect_task
+
+    async def test_advanced_session_options_preserve_audio_invariants(self):
+        settings = XaiRealtimeSettings(
+            api_url="wss://example.test/realtime",
+            api_key="secret",
+            session={
+                "reasoning": {"effort": "none"},
+                "turn_detection": {
+                    "threshold": 0.5,
+                    "idle_timeout_ms": 1000,
+                },
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 48000},
+                        "transcription": {"keyterms": ["Grok"]},
+                    },
+                    "output": {"speed": 1.2},
+                },
+            },
+        )
+        client = XaiRealtimeClient(settings)
+        session = client._session_update_event()["session"]
+
+        self.assertEqual("none", session["reasoning"]["effort"])
+        self.assertEqual(0.5, session["turn_detection"]["threshold"])
+        self.assertNotIn("idle_timeout_ms", session["turn_detection"])
+        self.assertEqual(16000, session["audio"]["input"]["format"]["rate"])
+        self.assertEqual("json", session["audio"]["output"]["transport"])
+        self.assertEqual("grok-transcribe", session["audio"]["input"]["transcription"]["model"])
+        self.assertEqual(["Grok"], session["audio"]["input"]["transcription"]["keyterms"])
+        self.assertEqual(1.2, session["audio"]["output"]["speed"])
 
 
 if __name__ == "__main__":

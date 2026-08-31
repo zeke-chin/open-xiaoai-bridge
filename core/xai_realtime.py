@@ -7,7 +7,8 @@ import base64
 import inspect
 import json
 import os
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -36,6 +37,7 @@ class XaiRealtimeSettings:
     aec: bool = True
     aec_delay_ms: int = 150
     greeting: bool = True
+    session: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_config(
@@ -74,6 +76,7 @@ class XaiRealtimeSettings:
             aec=bool(raw.get("aec", True)),
             aec_delay_ms=int(raw.get("aec_delay_ms", 150)),
             greeting=bool(raw.get("greeting", True)),
+            session=deepcopy(raw.get("session", {})),
         )
         settings.validate()
         return settings
@@ -90,6 +93,12 @@ class XaiRealtimeSettings:
             raise ValueError("xai.sample_rate 首版固定为 16000")
         if not 0 <= self.aec_delay_ms <= 500:
             raise ValueError("xai.aec_delay_ms 必须在 0..500 之间")
+        if not isinstance(self.session, dict):
+            raise ValueError("xai.session 必须是字典")
+        if "tools" in self.session:
+            raise ValueError(
+                "xai.session.tools 暂未开放；需与 Custom Function Tools 执行器一起配置"
+            )
 
 
 class XaiRealtimeClient:
@@ -264,28 +273,53 @@ class XaiRealtimeClient:
         await self._dispatch(message)
 
     def _session_update_event(self) -> dict[str, Any]:
-        return {
-            "type": "session.update",
-            "session": {
-                "instructions": self.settings.instructions,
-                "voice": self.settings.voice,
-                "audio": {
-                    "input": {
-                        "format": {
-                            "type": "audio/pcm",
-                            "rate": self.settings.sample_rate,
-                        }
+        session = {
+            "instructions": self.settings.instructions,
+            "voice": self.settings.voice,
+            "audio": {
+                "input": {
+                    "format": {
+                        "type": "audio/pcm",
+                        "rate": self.settings.sample_rate,
                     },
-                    "output": {
-                        "format": {
-                            "type": "audio/pcm",
-                            "rate": self.settings.sample_rate,
-                        }
+                    "transport": "json",
+                    "transcription": {
+                        "model": "grok-transcribe",
+                        "language_hint": "zh",
                     },
                 },
-                "turn_detection": {"type": "server_vad"},
+                "output": {
+                    "format": {
+                        "type": "audio/pcm",
+                        "rate": self.settings.sample_rate,
+                    },
+                    "transport": "json",
+                },
             },
+            "turn_detection": {"type": "server_vad"},
         }
+        _deep_merge(session, deepcopy(self.settings.session))
+
+        # 以下字段与音箱音频管线绑定，不能被高级参数覆盖。
+        session["instructions"] = self.settings.instructions
+        session["voice"] = self.settings.voice
+        session.setdefault("audio", {}).setdefault("input", {})["format"] = {
+            "type": "audio/pcm",
+            "rate": self.settings.sample_rate,
+        }
+        session["audio"]["input"]["transport"] = "json"
+        transcription = session["audio"]["input"].setdefault("transcription", {})
+        transcription["model"] = "grok-transcribe"
+        session["audio"].setdefault("output", {})["format"] = {
+            "type": "audio/pcm",
+            "rate": self.settings.sample_rate,
+        }
+        session["audio"]["output"]["transport"] = "json"
+        session.setdefault("turn_detection", {})["type"] = "server_vad"
+        # 本地 controller 负责超时退出，避免服务端主动重新搭话与退出竞态。
+        session["turn_detection"].pop("idle_timeout_ms", None)
+        session.pop("tools", None)
+        return {"type": "session.update", "session": session}
 
     async def _send_greeting(self) -> None:
         # 与已验证的 xAI cookbook 顺序保持一致。
@@ -313,3 +347,12 @@ class XaiRealtimeClient:
         result = self._event_handler(message)
         if inspect.isawaitable(result):
             await result
+
+
+def _deep_merge(target: dict[str, Any], update: dict[str, Any]) -> None:
+    """递归合并高级 session 参数，列表和标量直接覆盖。"""
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value

@@ -160,11 +160,25 @@ class XaiConversationControllerTest(unittest.IsolatedAsyncioTestCase):
         self.controller._stop_event.clear()
         await self.controller._handle_event(
             {
-                "type": "conversation.item.input_audio_transcription.completed",
+                "type": "conversation.item.input_audio_transcription.updated",
                 "transcript": "再见",
             }
         )
         self.assertTrue(self.controller._stop_event.is_set())
+
+    async def test_assistant_transcript_is_accumulated_until_response_done(self):
+        await self.controller._handle_event(
+            {"type": "response.created", "response": {"id": "r1"}}
+        )
+        await self.controller._handle_event(
+            {"type": "response.output_audio_transcript.delta", "delta": "你"}
+        )
+        await self.controller._handle_event(
+            {"type": "response.output_audio_transcript.delta", "delta": "好"}
+        )
+        self.assertEqual("你好", self.controller._assistant_transcript)
+        await self.controller._handle_event({"type": "response.done"})
+        self.assertEqual("", self.controller._assistant_transcript)
 
     async def test_start_uploads_100ms_chunks_and_restores_recording(self):
         task = asyncio.create_task(self.controller.start())

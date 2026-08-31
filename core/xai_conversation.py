@@ -81,6 +81,7 @@ class XaiConversationController:
         self._server_response_done = False
         self._allow_output = False
         self._response_id: str | None = None
+        self._assistant_transcript = ""
         self._playback_token: int | None = None
         self._playback_inflight = False
         self._idle_deadline: float | None = None
@@ -317,6 +318,9 @@ class XaiConversationController:
         if event_type == "response.output_audio.delta":
             self._handle_audio_delta(message)
             return
+        if event_type == "response.output_audio_transcript.delta":
+            self._assistant_transcript += str(message.get("delta", "") or "")
+            return
         if event_type == "input_audio_buffer.speech_started":
             self._user_speaking = True
             self._idle_deadline = None
@@ -327,6 +331,12 @@ class XaiConversationController:
             self._user_speaking = False
             return
         if event_type in {"response.done", "response.cancelled"}:
+            if self._assistant_transcript.strip():
+                logger.ai_response(
+                    self._assistant_transcript.strip(),
+                    module="xAI",
+                )
+                self._assistant_transcript = ""
             self._server_response_done = True
             self._allow_output = False
             self._flush_downlink_remainder()
@@ -358,6 +368,7 @@ class XaiConversationController:
         self._allow_output = True
         self._server_response_done = False
         self._assistant_speaking = False
+        self._assistant_transcript = ""
         self._idle_deadline = None
 
     def _handle_audio_delta(self, message: dict[str, Any]) -> None:
@@ -457,7 +468,10 @@ class XaiConversationController:
 
     def _extract_user_transcript(self, message: dict[str, Any]) -> str:
         event_type = message.get("type")
-        if event_type == "conversation.item.input_audio_transcription.completed":
+        if event_type in {
+            "conversation.item.input_audio_transcription.updated",
+            "conversation.item.input_audio_transcription.completed",
+        }:
             return str(message.get("transcript", "") or "").strip()
         if event_type != "conversation.item.added":
             return ""

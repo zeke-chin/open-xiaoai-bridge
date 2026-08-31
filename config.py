@@ -267,6 +267,26 @@ APP_CONFIG = {
         "aec": True,
         "aec_delay_ms": 150,
         "greeting": True,
+        # xAI session.update 高级参数；协议/设备不变量会由程序强制覆盖。
+        # tools 暂不开放，后续与 Custom Function Tools 执行器一起接入。
+        "session": {
+            "reasoning": {"effort": "none"},
+            "turn_detection": {
+                "threshold": 0.85,
+                "silence_duration_ms": 700,
+                "prefix_padding_ms": 333,
+            },
+            "audio": {
+                "input": {
+                    "transcription": {
+                        "language_hint": "zh",
+                        "keyterms": ["xAI", "Grok"],
+                    }
+                },
+                "output": {"speed": 1.0},
+            },
+            "replace": {},
+        },
     },
     "xiaoai": {
         "continuous_conversation_mode": True,
