@@ -66,7 +66,8 @@ class XaiConversationController:
             maxsize=_OUTPUT_QUEUE_FRAMES
         )
         self._playback_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(
-            maxsize=15
+            # AEC render 必须紧邻实际发送；这里只允许一个 20ms chunk 在途。
+            maxsize=1
         )
         self._uplink_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=3)
         self._downlink_remainder = bytearray()
@@ -215,7 +216,14 @@ class XaiConversationController:
             elif delay < -0.1:
                 next_tick = self._loop.time()
 
-            render = self._queue_get_nowait(self._downlink_queue)
+            playback_ready = (
+                not self._playback_inflight and self._playback_queue.empty()
+            )
+            render = (
+                self._queue_get_nowait(self._downlink_queue)
+                if playback_ready
+                else None
+            )
             render_for_aec = render or silence
             if self._aec_enabled:
                 try:
@@ -315,7 +323,7 @@ class XaiConversationController:
         if event_type == "response.created":
             self._start_response(message)
             return
-        if event_type == "response.output_audio.delta":
+        if event_type in {"response.output_audio.delta", "response.audio.delta"}:
             self._handle_audio_delta(message)
             return
         if event_type == "response.output_audio_transcript.delta":

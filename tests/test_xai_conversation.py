@@ -123,6 +123,16 @@ class XaiConversationControllerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(30, self.controller._downlink_queue.qsize())
 
+    async def test_audio_delta_alias_is_supported(self):
+        await self.controller._handle_event(
+            {"type": "response.created", "response": {"id": "r1"}}
+        )
+        delta = base64.b64encode(b"\x01\x00" * 160).decode()
+        await self.controller._handle_event(
+            {"type": "response.audio.delta", "response_id": "r1", "delta": delta}
+        )
+        self.assertEqual(1, self.controller._downlink_queue.qsize())
+
     async def test_response_done_drains_already_buffered_audio(self):
         await self.controller._handle_event(
             {"type": "response.created", "response": {"id": "r1"}}
