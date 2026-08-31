@@ -1,23 +1,29 @@
 import uuid
+import threading
 from typing import Any, Callable, ClassVar, Optional
 
 
 class __GlobalStream:
     def __init__(self):
         self.readers = {}
+        self._readers_lock = threading.Lock()
         self.on_output_data = None
 
     def register_reader(self, reader):
-        if reader.id not in self.readers:
-            self.readers[reader.id] = reader
+        with self._readers_lock:
+            if reader.id not in self.readers:
+                self.readers[reader.id] = reader
 
     def unregister_reader(self, reader) -> None:
-        if reader.id in self.readers:
-            del self.readers[reader.id]
+        with self._readers_lock:
+            if reader.id in self.readers:
+                del self.readers[reader.id]
 
     def input(self, data: bytes) -> None:
-        for key in self.readers:
-            self.readers[key].input(data)
+        with self._readers_lock:
+            readers = list(self.readers.values())
+        for reader in readers:
+            reader.input(data)
 
     def output(self, frames: bytes) -> None:
         if self.on_output_data:
@@ -36,6 +42,7 @@ class MyStream:
         input: bool = False,
         output: bool = False,
         frames_per_buffer: int = 1024,
+        max_buffer_bytes: int | None = None,
         start: bool = True,
     ) -> None:
         self.id = uuid.uuid4()
@@ -46,6 +53,9 @@ class MyStream:
         self._is_input = input
         self._is_output = output
         self._is_active = False
+        self._max_buffer_bytes = max_buffer_bytes
+        self._buffer_lock = threading.Lock()
+        self.dropped_bytes = 0
 
         self.input_bytes = bytearray()
         self._read_offset = 0
@@ -67,8 +77,9 @@ class MyStream:
         which makes read() skip freshly-arrived audio until the buffer refills
         past the stale offset — corrupting every capture after the first.
         """
-        self.input_bytes.clear()
-        self._read_offset = 0
+        with self._buffer_lock:
+            self.input_bytes.clear()
+            self._read_offset = 0
 
     def start_stream(self) -> None:
         if not self._is_active:
@@ -95,34 +106,57 @@ class MyStream:
             return
 
         if len(data) > 0:
-            self.input_bytes.extend(data)
+            with self._buffer_lock:
+                if self._read_offset:
+                    del self.input_bytes[:self._read_offset]
+                    self._read_offset = 0
+                self.input_bytes.extend(data)
+                if (
+                    self._max_buffer_bytes is not None
+                    and len(self.input_bytes) > self._max_buffer_bytes
+                ):
+                    overflow = len(self.input_bytes) - self._max_buffer_bytes
+                    # PCM16 必须按完整 sample 丢弃。
+                    overflow += overflow % 2
+                    del self.input_bytes[:overflow]
+                    self.dropped_bytes += overflow
 
     def read(self, num_frames=None, exception_on_overflow=False) -> bytes:
-        if num_frames is None:
-            data = bytes(self.input_bytes)
-            self.input_bytes.clear()
-            self._read_offset = 0
+        with self._buffer_lock:
+            if num_frames is None:
+                data = bytes(self.input_bytes[self._read_offset:])
+                self.input_bytes.clear()
+                self._read_offset = 0
+                return data
+
+            bytes_needed = num_frames * 2
+            if (
+                not self._is_input
+                or not self._is_active
+                # 达不到预期长度时，返回空字节，等待下一次读取
+                or len(self.input_bytes) - self._read_offset < bytes_needed
+            ):
+                return bytes([])
+
+            # 偏移读：只取需要的部分，不删除剩余数据
+            data = bytes(
+                self.input_bytes[
+                    self._read_offset:self._read_offset + bytes_needed
+                ]
+            )
+            self._read_offset += bytes_needed
+
+            # 延迟回收：累积偏移超过阈值才批量清理已读数据
+            if self._read_offset > 262144:
+                del self.input_bytes[:self._read_offset]
+                self._read_offset = 0
+
             return data
 
-        bytes_needed = num_frames * 2
-        if (
-            not self._is_input
-            or not self._is_active
-            # 达不到预期长度时，返回空字节，等待下一次读取
-            or len(self.input_bytes) - self._read_offset < bytes_needed
-        ):
-            return bytes([])
-
-        # 偏移读：只取需要的部分，不删除剩余数据
-        data = bytes(self.input_bytes[self._read_offset:self._read_offset + bytes_needed])
-        self._read_offset += bytes_needed
-
-        # 延迟回收：累积偏移超过阈值才批量清理已读数据
-        if self._read_offset > 262144:
-            del self.input_bytes[:self._read_offset]
-            self._read_offset = 0
-
-        return data
+    @property
+    def buffered_bytes(self) -> int:
+        with self._buffer_lock:
+            return len(self.input_bytes) - self._read_offset
 
 
 class MyAudio:
@@ -156,6 +190,7 @@ class MyAudio:
         input_device_index: Optional[int] = None,
         output_device_index: Optional[int] = None,
         frames_per_buffer: int = 1024,
+        max_buffer_bytes: int | None = None,
         start: bool = True,
         input_host_api_specific_stream_info: Optional[Any] = None,
         output_host_api_specific_stream_info: Optional[Any] = None,
@@ -171,6 +206,7 @@ class MyAudio:
             input=input,
             output=output,
             frames_per_buffer=frames_per_buffer,
+            max_buffer_bytes=max_buffer_bytes,
             start=start,
         )
 

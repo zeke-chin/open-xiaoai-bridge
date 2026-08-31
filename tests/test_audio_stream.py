@@ -68,6 +68,21 @@ class MyStreamOffsetTest(unittest.TestCase):
         self.assertEqual(0, stream._read_offset)
         self.assertEqual(0, len(stream.input_bytes))
 
+    def test_bounded_stream_drops_oldest_pcm_samples(self):
+        stream = MyStream(
+            rate=16000,
+            channels=1,
+            format=8,
+            input=True,
+            frames_per_buffer=2,
+            max_buffer_bytes=8,
+            start=True,
+        )
+        stream.input(b"\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00")
+
+        self.assertEqual(b"\x02\x00\x03\x00", stream.read(2))
+        self.assertEqual(2, stream.dropped_bytes)
+
 
 if __name__ == "__main__":
     unittest.main()
