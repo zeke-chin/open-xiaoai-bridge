@@ -5,7 +5,11 @@ import os
 import unittest
 from unittest import mock
 
-from core.xai_realtime import XaiRealtimeClient, XaiRealtimeSettings
+from core.xai_realtime import (
+    XaiConversationState,
+    XaiRealtimeClient,
+    XaiRealtimeSettings,
+)
 
 
 class _Config:
@@ -61,6 +65,28 @@ class XaiRealtimeSettingsTest(unittest.TestCase):
                 sample_rate=24000,
             ).validate()
 
+    def test_conversation_state_builds_resume_url_and_expires(self):
+        state = XaiConversationState(
+            conversation_id="conv-1",
+            last_activity_at=1000,
+        )
+        with mock.patch("core.xai_realtime.time.time", return_value=1100):
+            url = state.connection_url(
+                "wss://api.x.ai/v1/realtime?model=grok-voice-latest",
+                enabled=True,
+            )
+            self.assertIn("conversation_id=conv-1", url)
+            self.assertIn("model=grok-voice-latest", url)
+
+        with mock.patch("core.xai_realtime.time.time", return_value=3000):
+            self.assertNotIn(
+                "conversation_id",
+                state.connection_url(
+                    "wss://api.x.ai/v1/realtime?model=grok-voice-latest",
+                    enabled=True,
+                ),
+            )
+
     def test_tools_require_a_tool_executor(self):
         with self.assertRaisesRegex(ValueError, "Custom Function Tools"):
             XaiRealtimeSettings(
@@ -89,7 +115,14 @@ class XaiRealtimeClientTest(unittest.IsolatedAsyncioTestCase):
         client = XaiRealtimeClient(self.settings, self.events.append)
         with mock.patch("core.xai_realtime.ws_connect", side_effect=fake_connect):
             connect_task = asyncio.create_task(client.connect(timeout=1))
-            await self.ws.incoming.put(json.dumps({"type": "conversation.created"}))
+            await self.ws.incoming.put(
+                json.dumps(
+                    {
+                        "type": "conversation.created",
+                        "conversation": {"id": "conv-new"},
+                    }
+                )
+            )
             for _ in range(10):
                 if self.ws.sent:
                     break
@@ -108,6 +141,7 @@ class XaiRealtimeClientTest(unittest.IsolatedAsyncioTestCase):
             await connect_task
 
         self.assertTrue(client.is_ready)
+        self.assertEqual("conv-new", client.state.conversation_id)
         self.assertEqual(
             [
                 "session.update",

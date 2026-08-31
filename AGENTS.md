@@ -195,6 +195,8 @@ xAI 协议层与设备全双工策略分离：
 - `xai.session` 承载可透传的高级 `session.update` 参数，但 16k PCM、JSON transport、`server_vad` 与 `grok-transcribe` 是本地链路不变量
 - 不要只把 `tools` 数组发给服务端；Custom Function Tools 必须同时实现 tool registry、调用参数校验、异步执行、`function_call_output` 回传和下一轮 `response.create`
 - xAI 官方参数与事件快照见 `docs/xai-speech-to-speech.md`
+- `XaiConversationState` 只保存 `conversation_id`、活动时间和续接 URL；Session Resumption 不是上下文压缩
+- 后续上下文摘要/裁剪应新增独立 memory policy，不要由 `XaiRealtimeClient` 修改或伪造历史 turn
 
 ### XiaoAIConversationController (core/xiaoai_conversation.py)
 

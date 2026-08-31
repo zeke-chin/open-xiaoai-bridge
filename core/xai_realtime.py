@@ -7,10 +7,11 @@ import base64
 import inspect
 import json
 import os
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from websockets.asyncio.client import ClientConnection, connect as ws_connect
 from websockets.exceptions import ConnectionClosed
@@ -100,6 +101,47 @@ class XaiRealtimeSettings:
                 "xai.session.tools 暂未开放；需与 Custom Function Tools 执行器一起配置"
             )
 
+    @property
+    def resumption_enabled(self) -> bool:
+        resumption = self.session.get("resumption", {})
+        return isinstance(resumption, dict) and resumption.get("enabled") is True
+
+
+@dataclass(slots=True)
+class XaiConversationState:
+    """可跨 WebSocket 连接保存的服务端会话标识。
+
+    这里只描述断线续接状态，不承担长上下文摘要或压缩策略。
+    """
+
+    conversation_id: str | None = None
+    last_activity_at: float | None = None
+
+    def record_conversation(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        self.touch()
+
+    def touch(self) -> None:
+        self.last_activity_at = time.time()
+
+    def clear(self) -> None:
+        self.conversation_id = None
+        self.last_activity_at = None
+
+    def is_expired(self, ttl_seconds: float = 30 * 60) -> bool:
+        if not self.conversation_id or self.last_activity_at is None:
+            return True
+        return time.time() - self.last_activity_at >= ttl_seconds
+
+    def connection_url(self, api_url: str, *, enabled: bool) -> str:
+        """在启用且未过期时，把 conversation_id 安全写入查询参数。"""
+        if not enabled or self.is_expired():
+            return api_url
+        parsed = urlparse(api_url)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query["conversation_id"] = self.conversation_id or ""
+        return urlunparse(parsed._replace(query=urlencode(query)))
+
 
 class XaiRealtimeClient:
     """负责 xAI Realtime 协议收发，不承载设备音频策略。"""
@@ -108,10 +150,12 @@ class XaiRealtimeClient:
         self,
         settings: XaiRealtimeSettings,
         event_handler: EventHandler | None = None,
+        state: XaiConversationState | None = None,
     ) -> None:
         settings.validate()
         self.settings = settings
         self._event_handler = event_handler
+        self.state = state or XaiConversationState()
         self._ws: ClientConnection | None = None
         self._receive_task: asyncio.Task | None = None
         self._ready = asyncio.Event()
@@ -138,8 +182,12 @@ class XaiRealtimeClient:
         self._configured = False
         self.last_error = None
 
-        self._ws = await ws_connect(
+        connection_url = self.state.connection_url(
             self.settings.api_url,
+            enabled=self.settings.resumption_enabled,
+        )
+        self._ws = await ws_connect(
+            connection_url,
             additional_headers={
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
@@ -259,7 +307,11 @@ class XaiRealtimeClient:
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         event_type = message.get("type")
+        self.state.touch()
         if event_type == "conversation.created" and not self._configured:
+            conversation = message.get("conversation")
+            if isinstance(conversation, dict) and conversation.get("id"):
+                self.state.record_conversation(str(conversation["id"]))
             self._configured = True
             await self.send_event(self._session_update_event())
         elif event_type == "session.updated":

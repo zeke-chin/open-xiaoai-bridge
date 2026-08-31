@@ -407,6 +407,8 @@ XAI_ENABLE=1 XAI_API_KEY=xai-xxx uv run main.py
 - 输入、上行和下行音频均限制为最多 300 ms backlog，网络阻塞时丢弃最旧音频，避免补播陈旧语音。
 - `session` 是高级 `session.update` 参数块；`reasoning`、VAD 阈值、转写提示、语速和发音替换等可直接配置。16 kHz PCM、JSON transport、`server_vad` 和 `grok-transcribe` 由设备链路强制保证。
 - `session.tools` 暂不接受，避免出现模型发起 function call 但本地没有执行器的死链路；后续 Custom Function Tools 将以独立 registry/executor 接入。
+- `session.resumption.enabled=true` 时客户端会记录服务端 `conversation_id`；`XaiConversationState` 已负责续接 URL 和 30 分钟过期判断，但默认 controller 仍采用断线结束策略。后续重连只需把该 state 提升到会话管理层持久化。
+- Session Resumption 只解决断线后重放历史，不等于上下文压缩。长会话摘要/裁剪应作为独立 `ConversationMemoryPolicy`，不要放进 WebSocket 协议层。
 
 完整的 xAI Speech-to-Speech 参数与事件参考见 [docs/xai-speech-to-speech.md](docs/xai-speech-to-speech.md)。
 
